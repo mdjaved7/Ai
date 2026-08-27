@@ -23,7 +23,7 @@ MONGO_URI = os.getenv("MONGO_URI", "")
 
 # ShrinkBixby API & Tutorial Configuration
 SHRINK_API_TOKEN = os.getenv("SHRINK_API_TOKEN", "81f51fb11c1b277ee3dc2edc0b21fe5c5b95cd6a")
-TOKEN_VALIDITY_DURATION = 4 * 3600  # 8 Hours in seconds
+TOKEN_VALIDITY_DURATION = 4 * 3600  # 4 Hours in seconds
 TUTORIAL_VIDEO_LINK = os.getenv("TUTORIAL_VIDEO_LINK", "https://t.me/your_tutorial_link")
 
 # Multiple Admin IDs Setup
