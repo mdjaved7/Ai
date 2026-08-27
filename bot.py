@@ -326,7 +326,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             token_user_id = int(args[0].split("_")[1])
             if token_user_id == user.id:
                 renew_user_token(user.id)
-                await update.message.reply_text("✅ <b>Your Access Token has been successfully renewed for the next 8 hours!</b>\n\nAb aap apne file link par dubara click karke files le sakte hain.", parse_mode="HTML")
+                await update.message.reply_text("✅ <b>Your Access Token has been successfully renewed for the next 4 hours!</b>\n\nAb aap apne file link par dubara click karke files le sakte hain.", parse_mode="HTML")
                 return
         except Exception as e:
             print(f"Token Verification Error: {e}")
