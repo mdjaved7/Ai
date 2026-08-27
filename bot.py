@@ -354,7 +354,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ <b>ACCESS TOKEN EXPIRED!</b> ⚠️\n\n"
                 "<i>Your previous access session has ended. Please renew your token to continue downloading files smoothly.</i> ♻️\n\n"
                 "⏳ <b>Token Validity:</b> 4 Hours\n\n"
-                "💡 <i>This is a quick ads-based verification. Completing just 1 token grants you uninterrupted access to all shareable file links for the next 8 hours!</i> ✨"
+                "💡 <i>This is a quick ads-based verification. Completing just 1 token grants you uninterrupted access to all shareable file links for the next 4 hours!</i> ✨"
             )
             
             token_buttons = InlineKeyboardMarkup([
