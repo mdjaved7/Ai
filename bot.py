@@ -23,7 +23,7 @@ MONGO_URI = os.getenv("MONGO_URI", "")
 
 # ShrinkBixby API & Tutorial Configuration
 SHRINK_API_TOKEN = os.getenv("SHRINK_API_TOKEN", "81f51fb11c1b277ee3dc2edc0b21fe5c5b95cd6a")
-TOKEN_VALIDITY_DURATION = 8 * 3600  # 8 Hours in seconds
+TOKEN_VALIDITY_DURATION = 4 * 3600  # 8 Hours in seconds
 TUTORIAL_VIDEO_LINK = os.getenv("TUTORIAL_VIDEO_LINK", "https://t.me/your_tutorial_link")
 
 # Multiple Admin IDs Setup
@@ -286,7 +286,7 @@ async def send_files_logic(update, context, batch_key):
             delete_col.insert_one({
                 "chat_id": update.message.chat_id, 
                 "message_ids": sent_message_ids, 
-                "delete_at": time.time() + 28800 
+                "delete_at": time.time() + 14400 
             })
         except:
             pass
@@ -294,7 +294,7 @@ async def send_files_logic(update, context, batch_key):
     try: await context.bot.delete_message(chat_id=update.message.chat_id, message_id=info_msg.message_id)
     except: pass
 
-    alert_text = "𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 𝟾 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴."
+    alert_text = "𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 4 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴."
     if is_cancelled: alert_text += "\n\n⚠️ *Process was cancelled by user.*"
 
     try:
@@ -306,7 +306,7 @@ async def send_files_logic(update, context, batch_key):
         delete_col.insert_one({
             "chat_id": update.message.chat_id, 
             "message_ids": [final_msg.message_id], 
-            "delete_at": time.time() + 28800
+            "delete_at": time.time() + 14400
         })
     except: pass
 
