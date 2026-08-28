@@ -102,13 +102,13 @@ async def get_fsub_buttons(context, user_id, start_param):
 
         is_member = False
         
-        # Real-time check: Check if user is currently in the channel
+        # Real-time Status Check
         try:
             member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status in ['member', 'administrator', 'creator']:
                 is_member = True
             elif member.status in ['left', 'kicked']:
-                # Agar user ko nikal diya gaya hai, to Join Request DB se hata do
+                # Agar user remove kar diya gaya hai to record saf karein
                 join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
                 is_member = False
         except Exception as e:
@@ -117,46 +117,23 @@ async def get_fsub_buttons(context, user_id, start_param):
         if is_member:
             continue
 
-        # Agar user member nahi hai, check karo ki usne Request bhej rakhi hai ya nahi
+        # Check Active Join Request
         has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
         if has_requested:
             continue
 
-        # Agar na join hai aur na active request hai
+        # Target Channel Unjoined
         has_unjoined = True
         unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
 
     if has_unjoined:
-        bot_info = await context.bot.get_me()
-        try_again_link = f"https://t.me/{bot_info.username}?start={start_param}"
-        unjoined_buttons.append([InlineKeyboardButton("🔄 Try Again", url=try_again_link)])
+        # Dynamic Inline Callback for Try Again instead of URL
+        unjoined_buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data=f"try_again_{start_param}")])
         return False, unjoined_buttons
     else:
         return True, []
 
 # --- Background Services ---
-async def database_storage_checker(app):
-    while True:
-        try:
-            active_db, active_name = get_active_file_db()
-            stats_data = active_db.command("dbStats")
-            storage_size_mb = stats_data.get("storageSize", 0) / (1024 * 1024)
-            
-            if storage_size_mb >= 450.0:
-                alert_text = (
-                    f"⚠️ <b>MONGODB STORAGE WARNING!</b> ⚠️\n\n"
-                    f"Active DB ({active_name}) full hone wala hai!\n"
-                    f"<b>Current Usage:</b> {storage_size_mb:.2f} MB / 512 MB"
-                )
-                for adm in ADMIN_IDS:
-                    try:
-                        await app.bot.send_message(chat_id=adm, text=alert_text, parse_mode="HTML")
-                    except Exception:
-                        pass
-        except Exception as e:
-            print(f"Database check error: {e}")
-        await asyncio.sleep(3600)
-
 async def auto_delete_monitor(app):
     while True:
         try:
@@ -177,7 +154,6 @@ async def auto_delete_monitor(app):
 
 async def run_post_init(application):
     asyncio.create_task(auto_delete_monitor(application))
-    asyncio.create_task(database_storage_checker(application))
 
 # --- Send Files Logic ---
 async def send_files_logic(update, context, batch_key):
@@ -197,18 +173,6 @@ async def send_files_logic(update, context, batch_key):
         await context.bot.send_message(chat_id=chat_id, text="❌ Link invalid ya expire ho chuka hai.")
         return
 
-    try:
-        history_col.insert_one({
-            "user_id": user.id, 
-            "first_name": user.first_name, 
-            "username": user.username, 
-            "action": "requested_files", 
-            "batch_key": batch_key, 
-            "time": datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y-%m-%d %H:%M:%S')
-        })
-    except Exception:
-        pass
-    
     info_msg = await context.bot.send_message(
         chat_id=chat_id,
         text="⏳ Sending files...", 
@@ -236,12 +200,7 @@ async def send_files_logic(update, context, batch_key):
             if file_type == 'video' and original_caption:
                 custom_caption = f"{original_caption}\n\n👉 FILE SIZE :- {readable_size} 👑\n>> JOIN > @AllstoryFM2 🔥"
             else:
-                custom_caption = (
-                    f">> JOIN > @AllstoryFM2 🔥\n"
-                    f"✅✨\n\n"
-                    f"👉 FILE SIZE :- {readable_size} 👑\n"
-                    f"🔥"
-                )
+                custom_caption = f">> JOIN > @AllstoryFM2 🔥\n✅✨\n\n👉 FILE SIZE :- {readable_size} 👑\n🔥"
 
             if file_type == 'document': 
                 sent_msg = await context.bot.send_document(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
@@ -261,11 +220,7 @@ async def send_files_logic(update, context, batch_key):
 
     if len(sent_message_ids) > 0:
         try:
-            delete_col.insert_one({
-                "chat_id": chat_id, 
-                "message_ids": sent_message_ids, 
-                "delete_at": time.time() + 14400 
-            })
+            delete_col.insert_one({"chat_id": chat_id, "message_ids": sent_message_ids, "delete_at": time.time() + 14400})
         except Exception:
             pass
 
@@ -274,246 +229,121 @@ async def send_files_logic(update, context, batch_key):
     except Exception:
         pass
 
-    alert_text = "𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 4 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴."
-    if is_cancelled:
-        alert_text += "\n\n⚠️ *Process was cancelled by user.*"
+    alert_text = "🧹 **IMPORTANT NOTICE - Auto Deletion!** 🧹\n\nसभी फ़ाइलें **4 घंटे** में डिलीट हो जाएँगी! ⏳\n\nफ़ाइलों को अपने **Saved Messages** में फॉरवर्ड कर लें।
+    """
+    await context.bot.send_message(chat_id=chat_id, text=alert_text)
 
-    try:
-        final_msg = await context.bot.send_message(
-            chat_id=chat_id,
-            text=alert_text, 
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📟 UPDATE CHANNEL", url=CHANNEL_INVITE_LINK)]])
-        )
-        delete_col.insert_one({
-            "chat_id": chat_id, 
-            "message_ids": [final_msg.message_id], 
-            "delete_at": time.time() + 14400
-        })
-    except Exception:
-        pass
-
-# --- Command Handler: /start ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- Command & Callbacks Handlers ---
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
+    chat_id = update.effective_chat.id
+    
+    # User Logging
+    user_col.update_one(
+        {"_id": user.id},
+        {"$set": {"username": user.username, "first_name": user.first_name, "last_seen": time.time()}},
+        upsert=True
+    )
+
+    args = context.args
+    start_param = args[0] if args else ""
+
+    # Check Force Sub Status
+    is_approved, buttons = await get_fsub_buttons(context, user.id, start_param)
+    
+    if not is_approved:
+        text = "Access Restricted!\n\nFiles receive karne ke liye niche diye gaye channels ko join/request karein:"
+        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    # If Force Sub Passed
+    if start_param.startswith("batch_"):
+        batch_key = start_param.replace("batch_", "")
+        await send_files_logic(update, context, batch_key)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="Welcome! Send a valid link to get files.")
+
+async def try_again_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user = query.from_user
+    chat_id = query.message.chat_id
+    
+    # Callback param extract (e.g., try_again_batch_xyz)
+    data = query.data
+    start_param = data.replace("try_again_", "") if "try_again_" in data else ""
+
+    is_approved, buttons = await get_fsub_buttons(context, user.id, start_param)
+    
+    if not is_approved:
+        text = "Access Restricted!\n\nFiles receive karne ke liye niche diye gaye channels ko join/request karein:"
+        try:
+            await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(buttons))
+        except Exception:
+            pass
+        return
+
+    # Verified successfully
     try:
-        if not user_col.find_one({"user_id": user.id}):
-            user_col.insert_one({"user_id": user.id, "username": user.username, "first_name": user.first_name})
+        await query.delete_message()
     except Exception:
         pass
+
+    if start_param.startswith("batch_"):
+        batch_key = start_param.replace("batch_", "")
+        await send_files_logic(update, context, batch_key)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="✅ Verification complete! Aap ab bot use kar sakte hain.")
+
+# Event listener to capture Channel Join Requests
+async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    req = update.chat_join_request
+    if req:
+        user_id = req.from_user.id
+        channel_id = req.chat.id
         
-    args = context.args
-    if not args:
-        await update.message.reply_text("🗄️ Your automation scripts are securely archived 🛡️, fully optimized ⚙️, and ready for instant deployment 🚀💻⚡.")
-        return
-
-    target_batch = args[0]
-
-    # Force Sub Check (Join Request / Joining Verified)
-    has_joined_all, fsub_buttons = await get_fsub_buttons(context, user.id, target_batch)
-    if not has_joined_all:
-        await update.message.reply_text(
-            "⚠️ <b>Access Restricted!</b>\n\nFiles receive karne ke liye niche दिए गए channels ko join/request karein:",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(fsub_buttons)
-        )
-        return
-
-    # User Checked & Verified -> Deliver Files
-    asyncio.create_task(send_files_logic(update, context, target_batch))
-
-# --- Admin Commands ---
-async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    if len(context.args) < 3:
-        await update.message.reply_text("❌ <b>Format:</b> `/addchannel <Channel_ID> <Invite_Link> <Channel_Title>`", parse_mode="Markdown")
-        return
-    
-    try:
-        ch_id = int(context.args[0])
-        ch_link = context.args[1]
-        ch_title = " ".join(context.args[2:])
-        
-        fsub_col.update_one(
-            {"channel_id": ch_id},
-            {"$set": {"invite_link": ch_link, "title": ch_title}},
+        join_req_col.update_one(
+            {"user_id": user_id, "channel_id": channel_id},
+            {"$set": {"timestamp": time.time()}},
             upsert=True
         )
-        await update.message.reply_text(f"✅ Channel Added Successfully!\n\n📌 <b>Title:</b> {ch_title}\n🆔 <b>ID:</b> <code>{ch_id}</code>\n🔗 <b>Link:</b> {ch_link}", parse_mode="HTML")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error adding channel: {e}")
 
-async def del_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    if not context.args:
-        await update.message.reply_text("❌ <b>Format:</b> `/delchannel <Channel_ID>`", parse_mode="Markdown")
-        return
-    try:
-        ch_id = int(context.args[0])
-        res = fsub_col.delete_one({"channel_id": ch_id})
-        if res.deleted_count > 0:
-            await update.message.reply_text(f"✅ Channel <code>{ch_id}</code> removed from Force-Sub list.", parse_mode="HTML")
-        else:
-            await update.message.reply_text("❌ Channel ID not found.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error removing channel: {e}")
+# Event listener to monitor when user leaves or gets kicked from channels
+async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.chat_member
+    if result:
+        user_id = result.from_user.id
+        channel_id = result.chat.id
+        new_status = result.new_chat_member.status
 
-async def list_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    channels = list(fsub_col.find())
-    if not channels:
-        await update.message.reply_text("📁 Force Join list is empty.")
-        return
-    
-    msg = "📢 <b>Active Force Join Channels:</b>\n\n"
-    for idx, ch in enumerate(channels, 1):
-        msg += f"{idx}. <b>{ch.get('title')}</b>\n🆔 <code>{ch.get('channel_id')}</code>\n🔗 {ch.get('invite_link')}\n\n"
-    await update.message.reply_text(msg, parse_mode="HTML")
+        if new_status in ['left', 'kicked']:
+            # Channel se nikaale jaane par record hata do taaki phir se join karna pade
+            join_req_col.delete_one({"user_id": user_id, "channel_id": channel_id})
 
-# --- Callbacks ---
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    await query.answer()
     user_id = query.from_user.id
-    cancel_status[user_id] = True 
-    try:
-        await query.message.delete()
-    except Exception:
-        pass
-    await query.answer("❌ Files bhejna rok diya gaya hai.")
+    cancel_status[user_id] = True
+    await query.edit_message_text("❌ Process Cancelled!")
 
-# --- Batch Storage & Forwarding ---
-async def process_batch_queue(user_id, context, message):
-    await asyncio.sleep(15)
-    if user_id not in user_queues: return
-    raw_files = user_queues.pop(user_id)
-    saved_files = []
-    
-    for msg in raw_files:
-        if not msg: continue
-        file_obj = msg.document or msg.video or (msg.photo[-1] if msg.photo else None) or msg.audio
-        file_id = file_obj.file_id if file_obj else None
-        file_size = file_obj.file_size if file_obj and hasattr(file_obj, 'file_size') else 0
-        file_caption = msg.caption or "" 
-        
-        if file_id:
-            while True:  
-                try:
-                    if PRIVATE_STORE_ID != 0:
-                        await context.bot.forward_message(PRIVATE_STORE_ID, msg.chat_id, msg.message_id)
-                    saved_files.append({
-                        "file_id": file_id, 
-                        "file_size": file_size,
-                        "file_type": 'document' if msg.document else ('video' if msg.video else ('photo' if msg.photo else 'audio')),
-                        "caption": file_caption 
-                    })
-                    await asyncio.sleep(0.2)
-                    break
-                except Exception as e:
-                    error_str = str(e)
-                    if "FloodWait" in error_str:
-                        seconds = int(re.search(r'\d+', error_str).group()) if re.search(r'\d+', error_str) else 5
-                        await asyncio.sleep(seconds + 1)
-                    else:
-                        break
-
-    backup_queues[user_id] = saved_files
-    await message.reply_text("✅ Batch stored! /getlink command bhejkar link generate karein.")
-
-async def handle_incoming_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS: return
-
-    if user_id not in user_queues:
-        user_queues[user_id] = []
-    
-    user_queues[user_id].append(update.message)
-    
-    if user_id in processing_tasks:
-        processing_tasks[user_id].cancel()
-
-    processing_tasks[user_id] = asyncio.create_task(process_batch_queue(user_id, context, update.message))
-
-async def get_link_manually(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id not in ADMIN_IDS: return
-    
-    if user_id not in backup_queues or not backup_queues[user_id]: 
-        await update.message.reply_text("❌ Queue khali hai! Pehle files bhejein.")
-        return
-        
-    batch_key = f"batch_{int(time.time())}"
-    try:
-        active_db, active_name = get_active_file_db()
-        file_batch_col = active_db['file_batches']
-        
-        file_batch_col.insert_one({"batch_key": batch_key, "files": backup_queues[user_id], "timestamp": time.time()})
-        registry_col.insert_one({"batch_key": batch_key, "db_name": active_name})
-        
-        backup_queues.pop(user_id, None)
-        bot_info = await context.bot.get_me()
-        await update.message.reply_text(f"🔗 Link: https://t.me/{bot_info.username}?start={batch_key}\n📂 Stored in: {active_name}")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Link generation error: {e}")
-
-# --- Channel Event Listeners ---
-async def handle_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        result = update.chat_member
-        if result:
-            user_id = result.new_chat_member.user.id
-            chat_id = result.chat.id
-            new_status = result.new_chat_member.status
-            
-            # Agar user chhod deta hai ya admin use nikal deta hai, to DB se remove kar do
-            if new_status in ['left', 'kicked']:
-                join_req_col.delete_one({"user_id": user_id, "channel_id": chat_id})
-            elif new_status in ['member', 'administrator', 'creator']:
-                join_req_col.delete_one({"user_id": user_id, "channel_id": chat_id})
-    except Exception as e:
-        print(f"Chat Member Update Error: {e}")
-
-async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        user = update.chat_join_request.from_user
-        chat = update.chat_join_request.chat
-        
-        # Join Request DB me store karein
-        join_req_col.update_one(
-            {"user_id": user.id, "channel_id": chat.id},
-            {"$set": {"status": "requested", "time": time.time()}},
-            upsert=True
-        )
-    except Exception as e:
-        print(f"Join Request Handling Error: {e}")
-
-# --- App Startup ---
+# Bot Setup
 def main():
-    if not TELEGRAM_BOT_TOKEN:
-        print("❌ TELEGRAM_BOT_TOKEN missing!")
-        return
+    req = HTTPXRequest(connection_pool_size=8, read_timeout=20, write_timeout=20, connect_timeout=20)
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(req).post_init(run_post_init).build()
 
-    request_kwargs = HTTPXRequest(connect_timeout=20.0, read_timeout=20.0)
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request_kwargs).post_init(run_post_init).build()
-
-    # Commands
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("getlink", get_link_manually))
-    app.add_handler(CommandHandler("addchannel", add_channel))
-    app.add_handler(CommandHandler("delchannel", del_channel))
-    app.add_handler(CommandHandler("channels", list_channels))
-    
-    # Callbacks
+    app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CallbackQueryHandler(try_again_handler, pattern="^try_again"))
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel_action$"))
     
-    # Files
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.PHOTO | filters.AUDIO, handle_incoming_files))
+    # Join Request & Member Update Listeners
+    app.add_handler(ChatJoinRequestHandler(join_request_handler))
+    app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
 
-    # Realtime Event Handlers for Channels
-    app.add_handler(ChatJoinRequestHandler(handle_join_request))
-    app.add_handler(ChatMemberHandler(handle_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
+    print("Bot operational with Fixed Try Again, Dynamic Keyboard & Excluded Member Auto-check...")
+    app.run_polling(drop_pending_updates=True)
 
-    print("🤖 Bot Running (Pure Force-Sub Mode)...")
-    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+    
