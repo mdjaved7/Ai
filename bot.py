@@ -1,7 +1,6 @@
 import os
 import time
 import asyncio
-import aiohttp
 import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -23,15 +22,9 @@ from pymongo import MongoClient
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 MONGO_URI = os.getenv("MONGO_URI", "") 
 
-# ShrinkBixby API & Tutorial Configuration
-SHRINK_API_TOKEN = os.getenv("SHRINK_API_TOKEN", "81f51fb11c1b277ee3dc2edc0b21fe5c5b95cd6a")
-TOKEN_VALIDITY_DURATION = 4 * 3600  # 4 Hours in seconds
-TUTORIAL_VIDEO_LINK = os.getenv("TUTORIAL_VIDEO_LINK", "https://t.me/your_tutorial_link")
-
-# Multiple Admin IDs Setup
+# Admin IDs Setup
 ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "0")
 ADMIN_IDS = [int(aid.strip()) for aid in ADMIN_IDS_RAW.split(",") if aid.strip().isdigit()]
-ADMIN_ID = ADMIN_IDS[0] if ADMIN_IDS else 0
 
 CHANNEL_INVITE_LINK = os.getenv("CHANNEL_INVITE_LINK", "") 
 PRIVATE_STORE_ID = int(os.getenv("PRIVATE_STORE_ID", "0"))  
@@ -44,11 +37,10 @@ primary_db = client['bot_primary_db']
 user_col = primary_db['users']
 delete_col = primary_db['delete_queue'] 
 history_col = primary_db['user_history']  
-token_col = primary_db['user_tokens'] 
 registry_col = primary_db['batch_registry']
 config_col = primary_db['bot_config']
 
-# Dynamic Multi Force Join Collection
+# Dynamic Multi Force Join Collections
 fsub_col = primary_db['force_sub_channels']
 join_req_col = primary_db['join_requests_data']
 
@@ -94,34 +86,6 @@ def get_readable_size(size_in_bytes):
         size_in_bytes /= 1024.0
     return f"{size_in_bytes:.2f} PB"
 
-# --- Shortener API ---
-async def get_short_link(long_url):
-    api_url = f"https://shrinkbixby.com/api?api={SHRINK_API_TOKEN}&url={long_url}"
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.get(api_url) as response:
-                data = await response.json()
-                if data.get("status") == "success":
-                    return data.get("shortenedUrl")
-        except Exception as e:
-            print(f"ShrinkBixby API Error: {e}")
-    return long_url  
-
-# --- Token Logic ---
-def is_token_valid(user_id):
-    user_record = token_col.find_one({"user_id": user_id})
-    if not user_record or "expiry" not in user_record:
-        return False
-    return time.time() < user_record["expiry"]
-
-def renew_user_token(user_id):
-    expiry_time = time.time() + TOKEN_VALIDITY_DURATION
-    token_col.update_one(
-        {"user_id": user_id},
-        {"$set": {"expiry": expiry_time}},
-        upsert=True
-    )
-
 # --- Dynamic Multi Force Sub Checker ---
 async def get_fsub_buttons(context, user_id, start_param):
     channels = list(fsub_col.find())
@@ -129,7 +93,6 @@ async def get_fsub_buttons(context, user_id, start_param):
         return True, [] 
 
     unjoined_buttons = []
-    joined_buttons = []
     has_unjoined = False
 
     for ch in channels:
@@ -139,24 +102,27 @@ async def get_fsub_buttons(context, user_id, start_param):
 
         is_member = False
         
+        # Real-time check: Check if user is currently in the channel
         try:
             member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status in ['member', 'administrator', 'creator']:
                 is_member = True
+            elif member.status in ['left', 'kicked']:
+                # Agar user ko nikal diya gaya hai, to Join Request DB se hata do
                 join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
+                is_member = False
         except Exception as e:
             print(f"Chat Member Check Error ({ch_id}): {e}")
 
         if is_member:
-            joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
+        # Agar user member nahi hai, check karo ki usne Request bhej rakhi hai ya nahi
         has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
-        
         if has_requested:
-            joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
+        # Agar na join hai aur na active request hai
         has_unjoined = True
         unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
 
@@ -341,44 +307,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🗄️ Your automation scripts are securely archived 🛡️, fully optimized ⚙️, and ready for instant deployment 🚀💻⚡.")
         return
 
-    raw_param = args[0]
-    target_batch = None
+    target_batch = args[0]
 
-    # Verify Token Link Check
-    if raw_param.startswith("verify_"):
-        parts = raw_param.split("_")
-        try:
-            token_user_id = int(parts[1])
-            if token_user_id == user.id:
-                renew_user_token(user.id)
-                # Agar BATCHKEY pass hui hai
-                if len(parts) >= 3:
-                    target_batch = "_".join(parts[2:])
-                else:
-                    await update.message.reply_text(
-                        "🎉 <b>Access Token Successfully Renewed!</b>\n\n"
-                        "✅ Aapko agle <b>4 ghante</b> ke liye full access mil gaya hai.\n"
-                        "👉 Ab aap apni pasandida file ke link par dobara click karke files prapt kar sakte hain!",
-                        parse_mode="HTML"
-                    )
-                    return
-        except Exception as e:
-            print(f"Token Verification Parsing Error: {e}")
-
-    if not target_batch:
-        target_batch = raw_param
-
-    # Agar token verify karne ki wajah se 'verify_' likha aa raha hai aur aage koi batch ID nahi mili:
-    if target_batch.startswith("verify_"):
-        await update.message.reply_text(
-            "🎉 <b>Access Token Successfully Renewed!</b>\n\n"
-            "✅ Aapko agle <b>4 ghante</b> ke liye full access mil gaya hai.\n"
-            "👉 Ab aap apni file ke link par dobara click kar sakte hain!",
-            parse_mode="HTML"
-        )
-        return
-
-    # 1. Force Sub Check
+    # Force Sub Check (Join Request / Joining Verified)
     has_joined_all, fsub_buttons = await get_fsub_buttons(context, user.id, target_batch)
     if not has_joined_all:
         await update.message.reply_text(
@@ -388,32 +319,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # 2. Token Check
-    if not is_token_valid(user.id):
-        bot_info = await context.bot.get_me()
-        long_target_url = f"https://t.me/{bot_info.username}?start=verify_{user.id}_{target_batch}"
-        short_token_url = await get_short_link(long_target_url)
-        
-        token_msg = (
-            "⚠️ <b>ACCESS TOKEN EXPIRED!</b> ⚠️\n\n"
-            "<i>Your previous access session has ended. Please renew your token to continue downloading files smoothly.</i> ♻️\n\n"
-            "⏳ <b>Token Validity:</b> 4 Hours\n\n"
-            "💡 <i>Completing just 1 token grants you uninterrupted access to all shareable file links for the next 4 hours!</i> ✨"
-        )
-        
-        token_buttons = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔑 Renew Access Token", url=short_token_url)],
-            [InlineKeyboardButton("Tutorial Video", url=TUTORIAL_VIDEO_LINK)],
-            [InlineKeyboardButton("♻️ Try Again", callback_data=f"check_token_{target_batch}")]
-        ])
-        
-        await update.message.reply_text(token_msg, parse_mode="HTML", reply_markup=token_buttons)
-        return
-
-    # 3. Deliver Files
+    # User Checked & Verified -> Deliver Files
     asyncio.create_task(send_files_logic(update, context, target_batch))
 
-# --- Admin Dynamic Force-Sub Commands ---
+# --- Admin Commands ---
 async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
     if len(context.args) < 3:
@@ -461,7 +370,7 @@ async def list_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"{idx}. <b>{ch.get('title')}</b>\n🆔 <code>{ch.get('channel_id')}</code>\n🔗 {ch.get('invite_link')}\n\n"
     await update.message.reply_text(msg, parse_mode="HTML")
 
-# --- Callbacks & Handlers ---
+# --- Callbacks ---
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -471,32 +380,6 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
     await query.answer("❌ Files bhejna rok diya gaya hai.")
-
-async def token_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    user_id = query.from_user.id
-    data = query.data
-    
-    batch_key = data.replace("check_token_", "") if data.startswith("check_token_") else ""
-    
-    if is_token_valid(user_id):
-        await query.answer("✅ Access Token active hai!", show_alert=False)
-        try:
-            await query.message.delete()
-        except Exception:
-            pass
-        if batch_key:
-            has_joined_all, fsub_buttons = await get_fsub_buttons(context, user_id, batch_key)
-            if not has_joined_all:
-                await query.message.reply_text(
-                    "⚠️ <b>Access Restricted!</b>\n\nFiles receive karne ke liye niche दिए गए channels ko join/request karein:",
-                    parse_mode="HTML",
-                    reply_markup=InlineKeyboardMarkup(fsub_buttons)
-                )
-                return
-            asyncio.create_task(send_files_logic(update, context, batch_key))
-    else:
-        await query.answer("❌ Token abhi verified nahi hai! Pehle 'Renew Access Token' par click karein.", show_alert=True)
 
 # --- Batch Storage & Forwarding ---
 async def process_batch_queue(user_id, context, message):
@@ -572,14 +455,20 @@ async def get_link_manually(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Link generation error: {e}")
 
-# --- Event Listeners ---
+# --- Channel Event Listeners ---
 async def handle_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         result = update.chat_member
         if result:
             user_id = result.new_chat_member.user.id
             chat_id = result.chat.id
-            join_req_col.delete_one({"user_id": user_id, "channel_id": chat_id})
+            new_status = result.new_chat_member.status
+            
+            # Agar user chhod deta hai ya admin use nikal deta hai, to DB se remove kar do
+            if new_status in ['left', 'kicked']:
+                join_req_col.delete_one({"user_id": user_id, "channel_id": chat_id})
+            elif new_status in ['member', 'administrator', 'creator']:
+                join_req_col.delete_one({"user_id": user_id, "channel_id": chat_id})
     except Exception as e:
         print(f"Chat Member Update Error: {e}")
 
@@ -588,6 +477,7 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
         user = update.chat_join_request.from_user
         chat = update.chat_join_request.chat
         
+        # Join Request DB me store karein
         join_req_col.update_one(
             {"user_id": user.id, "channel_id": chat.id},
             {"$set": {"status": "requested", "time": time.time()}},
@@ -614,16 +504,15 @@ def main():
     
     # Callbacks
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel_action$"))
-    app.add_handler(CallbackQueryHandler(token_callback, pattern="^check_token_"))
     
     # Files
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.PHOTO | filters.AUDIO, handle_incoming_files))
 
-    # Event Handlers
+    # Realtime Event Handlers for Channels
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     app.add_handler(ChatMemberHandler(handle_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
 
-    print("🤖 Bot Running...")
+    print("🤖 Bot Running (Pure Force-Sub Mode)...")
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
