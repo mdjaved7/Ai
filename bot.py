@@ -139,15 +139,12 @@ async def get_fsub_buttons(context, user_id, start_param):
 
         is_member = False
         
-        # Check 1: LIVE STATUS CHECK FIRST
+        # Check Live Status
         try:
             member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status in ['member', 'administrator', 'creator']:
                 is_member = True
-                # User channel me hai, to unka purana bypass token delete kar do
-                join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
-            elif member.status in ['kicked', 'banned']:
-                # User block hai, to bypass delete kar do
+                # User channel me active hai, to old pending request delete kardo
                 join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
         except Exception:
             pass
@@ -156,14 +153,14 @@ async def get_fsub_buttons(context, user_id, start_param):
             joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
-        # Check 2: DB Check For Pending Request
+        # If user is not member right now, check pending join request in DB
         has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
         
         if has_requested:
             joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
-        # If user is neither a member nor has a pending request
+        # User is neither member nor has pending request (e.g. left/removed)
         has_unjoined = True
         unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
 
@@ -220,6 +217,7 @@ async def run_post_init(application):
 # --- Send Files Logic ---
 async def send_files_logic(update, context, batch_key):
     user = update.effective_user
+    chat_id = update.effective_chat.id
     cancel_status[user.id] = False 
     
     reg_record = registry_col.find_one({"batch_key": batch_key})
@@ -231,7 +229,7 @@ async def send_files_logic(update, context, batch_key):
         batch = client['bot_database']['file_batches'].find_one({"batch_key": batch_key})
     
     if not batch:
-        await update.message.reply_text("❌ Yeh link amanaye (invalid) hai.")
+        await context.bot.send_message(chat_id=chat_id, text="❌ Yeh link amanaye (invalid) hai.")
         return
 
     try:
@@ -246,8 +244,9 @@ async def send_files_logic(update, context, batch_key):
     except:
         pass
     
-    info_msg = await update.message.reply_text(
-        "⏳ Sending files...", 
+    info_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text="⏳ Sending files...", 
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("• Cancel", callback_data="cancel_action")],
             [InlineKeyboardButton("📟 UPDATE CHANNEL", url=CHANNEL_INVITE_LINK)]
@@ -280,13 +279,13 @@ async def send_files_logic(update, context, batch_key):
                 )
 
             if file['file_type'] == 'document': 
-                sent_msg = await context.bot.send_document(update.message.chat_id, file['file_id'], protect_content=True, caption=custom_caption)
+                sent_msg = await context.bot.send_document(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
             elif file['file_type'] == 'video': 
-                sent_msg = await context.bot.send_video(update.message.chat_id, file['file_id'], protect_content=True, caption=custom_caption)
+                sent_msg = await context.bot.send_video(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
             elif file['file_type'] == 'photo': 
-                sent_msg = await context.bot.send_photo(update.message.chat_id, file['file_id'], protect_content=True, caption=custom_caption)
+                sent_msg = await context.bot.send_photo(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
             elif file['file_type'] == 'audio': 
-                sent_msg = await context.bot.send_audio(update.message.chat_id, file['file_id'], protect_content=True, caption=custom_caption)
+                sent_msg = await context.bot.send_audio(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
 
             if sent_msg: 
                 sent_message_ids.append(sent_msg.message_id)
@@ -298,27 +297,28 @@ async def send_files_logic(update, context, batch_key):
     if len(sent_message_ids) > 0:
         try:
             delete_col.insert_one({
-                "chat_id": update.message.chat_id, 
+                "chat_id": chat_id, 
                 "message_ids": sent_message_ids, 
                 "delete_at": time.time() + 14400 
             })
         except:
             pass
 
-    try: await context.bot.delete_message(chat_id=update.message.chat_id, message_id=info_msg.message_id)
+    try: await context.bot.delete_message(chat_id=chat_id, message_id=info_msg.message_id)
     except: pass
 
     alert_text = "𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 4 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴."
     if is_cancelled: alert_text += "\n\n⚠️ *Process was cancelled by user.*"
 
     try:
-        final_msg = await update.message.reply_text(
-            alert_text, 
+        final_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=alert_text, 
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📟 UPDATE CHANNEL", url=CHANNEL_INVITE_LINK)]])
         )
         delete_col.insert_one({
-            "chat_id": update.message.chat_id, 
+            "chat_id": chat_id, 
             "message_ids": [final_msg.message_id], 
             "delete_at": time.time() + 14400
         })
@@ -333,54 +333,65 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except: pass
         
     args = context.args
-    
-    if args and args[0].startswith("verify_"):
+    if not args:
+        await update.message.reply_text("🗄️ Your automation scripts are securely archived 🛡️, fully optimized ⚙️, and ready for instant deployment 🚀💻⚡. Ready when you are! 🎯🔥")
+        return
+
+    raw_param = args[0]
+    target_batch = None
+
+    # Verify Token Link check (verify_USERID or verify_USERID_BATCHKEY)
+    if raw_param.startswith("verify_"):
+        parts = raw_param.split("_", 2)
         try:
-            token_user_id = int(args[0].split("_")[1])
+            token_user_id = int(parts[1])
             if token_user_id == user.id:
                 renew_user_token(user.id)
-                await update.message.reply_text("✅ <b>Your Access Token has been successfully renewed for the next 4 hours!</b>\n\nAb aap apne file link par dubara click karke files le sakte hain.", parse_mode="HTML")
-                return
+                if len(parts) > 2:
+                    target_batch = parts[2]
+                else:
+                    await update.message.reply_text("✅ <b>Your Access Token has been successfully renewed for 4 hours!</b>\n\nAb aap apne file link par click karke files le sakte hain.", parse_mode="HTML")
+                    return
         except Exception as e:
             print(f"Token Verification Error: {e}")
 
-    if args:
-        start_param = args[0]
-        
-        has_joined_all, fsub_buttons = await get_fsub_buttons(context, user.id, start_param)
-        if not has_joined_all:
-            await update.message.reply_text(
-                "⚠️ <b>Access Restricted!</b>\n\nFiles receive karne ke liye niche diye gaye remaining channels ko join karein:",
-                parse_mode="HTML",
-                reply_markup=InlineKeyboardMarkup(fsub_buttons)
-            )
-            return
+    if not target_batch:
+        target_batch = raw_param
 
-        if not is_token_valid(user.id):
-            bot_info = await context.bot.get_me()
-            long_target_url = f"https://t.me/{bot_info.username}?start=verify_{user.id}"
-            short_token_url = await get_short_link(long_target_url)
-            
-            token_msg = (
-                "⚠️ <b>ACCESS TOKEN EXPIRED!</b> ⚠️\n\n"
-                "<i>Your previous access session has ended. Please renew your token to continue downloading files smoothly.</i> ♻️\n\n"
-                "⏳ <b>Token Validity:</b> 4 Hours\n\n"
-                "💡 <i>This is a quick ads-based verification. Completing just 1 token grants you uninterrupted access to all shareable file links for the next 4 hours!</i> ✨"
-            )
-            
-            token_buttons = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔑 Renew Access Token", url=short_token_url)],
-                [InlineKeyboardButton("Tutorial Video", url=TUTORIAL_VIDEO_LINK)],
-                [InlineKeyboardButton("♻️ Try Again", callback_data="check_token")]
-            ])
-            
-            await update.message.reply_text(token_msg, parse_mode="HTML", reply_markup=token_buttons)
-            return
-
-        asyncio.create_task(send_files_logic(update, context, start_param))
+    # CHECK 1: FORCE JOIN CHECK MUST ALWAYS HAPPEN FIRST!
+    has_joined_all, fsub_buttons = await get_fsub_buttons(context, user.id, target_batch)
+    if not has_joined_all:
+        await update.message.reply_text(
+            "⚠️ <b>Access Restricted!</b>\n\nFiles receive karne ke liye niche दिए गए channels ko join/request karein:",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(fsub_buttons)
+        )
         return
+
+    # CHECK 2: ACCESS TOKEN CHECK
+    if not is_token_valid(user.id):
+        bot_info = await context.bot.get_me()
+        long_target_url = f"https://t.me/{bot_info.username}?start=verify_{user.id}_{target_batch}"
+        short_token_url = await get_short_link(long_target_url)
         
-    await update.message.reply_text("🗄️ Your automation scripts are securely archived 🛡️, fully optimized ⚙️, and ready for instant deployment 🚀💻⚡. Ready when you are! 🎯🔥")
+        token_msg = (
+            "⚠️ <b>ACCESS TOKEN EXPIRED!</b> ⚠️\n\n"
+            "<i>Your previous access session has ended. Please renew your token to continue downloading files smoothly.</i> ♻️\n\n"
+            "⏳ <b>Token Validity:</b> 4 Hours\n\n"
+            "💡 <i>This is a quick ads-based verification. Completing just 1 token grants you uninterrupted access to all shareable file links for the next 4 hours!</i> ✨"
+        )
+        
+        token_buttons = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔑 Renew Access Token", url=short_token_url)],
+            [InlineKeyboardButton("Tutorial Video", url=TUTORIAL_VIDEO_LINK)],
+            [InlineKeyboardButton("♻️ Try Again", callback_data=f"check_token_{target_batch}")]
+        ])
+        
+        await update.message.reply_text(token_msg, parse_mode="HTML", reply_markup=token_buttons)
+        return
+
+    # ALL CHECKS PASSED -> DELIVER FILES
+    asyncio.create_task(send_files_logic(update, context, target_batch))
 
 # --- Dynamic Admin Multi-Force Join Management Commands ---
 async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -465,7 +476,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📥 Total Requests: {total_reqs}\n"
                 f"🗄️ Active DB Storage: {storage_text}"
             )
-        except Exception as e:
+         except Exception as e:
             await update.message.reply_text(f"❌ Stats calculation error: {e}")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -504,13 +515,26 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def token_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
+    data = query.data
+    
+    batch_key = data.replace("check_token_", "") if data.startswith("check_token_") else ""
     
     if is_token_valid(user_id):
-        await query.answer("✅ Aapka Access Token active hai! Dubara /start command bhejein.", show_alert=True)
+        await query.answer("✅ Access Token active hai!", show_alert=False)
         try: await query.message.delete()
         except: pass
+        if batch_key:
+            has_joined_all, fsub_buttons = await get_fsub_buttons(context, user_id, batch_key)
+            if not has_joined_all:
+                await query.message.reply_text(
+                    "⚠️ <b>Access Restricted!</b>\n\nFiles receive karne ke liye niche दिए गए channels ko join/request karein:",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(fsub_buttons)
+                )
+                return
+            asyncio.create_task(send_files_logic(update, context, batch_key))
     else:
-        await query.answer("❌ Token abhi verified nahi hai! Pehle 'Renew Access Token' par click karke token generate karein.", show_alert=True)
+        await query.answer("❌ Token abhi verified nahi hai! Pehle 'Renew Access Token' par click karke token verify karein.", show_alert=True)
 
 async def process_batch_queue(user_id, context, message):
     await asyncio.sleep(15)
@@ -587,13 +611,12 @@ async def get_link_manually(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Member Action & Join Request Event Listeners ---
 async def handle_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Remove bypass entry when user's status in the channel changes (e.g., approved or kicked/removed)."""
+    """Clean up request record whenever user status in channel changes."""
     try:
         result = update.chat_member
         if result:
             user_id = result.new_chat_member.user.id
             chat_id = result.chat.id
-            # User channel mein approve hua ya remove hua, uska bypass token delete kar do.
             join_req_col.delete_one({"user_id": user_id, "channel_id": chat_id})
     except Exception as e:
         print(f"Chat Member Update Error: {e}")
@@ -603,7 +626,6 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
         user = update.chat_join_request.from_user
         chat = update.chat_join_request.chat
         
-        # Request aane par user ko DB mein save karlo as 'requested' (taaki bypass mil jaye)
         join_req_col.update_one(
             {"user_id": user.id, "channel_id": chat.id},
             {"$set": {"status": "requested", "time": time.time()}},
@@ -636,19 +658,18 @@ def main():
     
     # Inline Callback Handlers
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel_action$"))
-    app.add_handler(CallbackQueryHandler(token_callback, pattern="^check_token$"))
+    app.add_handler(CallbackQueryHandler(token_callback, pattern="^check_token_"))
     
     # File Media Handlers
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.PHOTO | filters.AUDIO, handle_incoming_files))
 
-    # Event Handlers (Join Request & Member Update)
+    # Event Handlers
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     app.add_handler(ChatMemberHandler(handle_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
 
-    print("🤖 Bot with Request-Based Bypass & Auto-Clear logic successfully running...")
-    
-    # Updated polling with ALL_TYPES so ChatMember events are received
+    print("🤖 Bot running with fixed Force-Sub & Seamless Token Flow...")
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
+   
