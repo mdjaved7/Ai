@@ -9,8 +9,8 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 
 # 🔑 अपनी डिटेल्स यहाँ भरें
-TELEGRAM_BOT_TOKEN = "YOUR_BOT_TOKEN"
-MONGO_URI = "YOUR_MONGO_URI"
+TELEGRAM_BOT_TOKEN = "8933588495:AAGI5TLmfV8wob7GY8aUHY4k8gflDRxb0dY"
+MONGO_URI = "mongodb+srv://mybot7:mdjaved11@cluster0.kz1njzu.mongodb.net/?appName=Cluster0"
 ADMIN_ID = 6598432032        
 PRIVATE_STORE_ID = -1004319812230  
 
