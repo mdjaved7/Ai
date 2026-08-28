@@ -108,7 +108,7 @@ async def get_fsub_buttons(context, user_id, start_param):
             if member.status in ['member', 'administrator', 'creator']:
                 is_member = True
             elif member.status in ['left', 'kicked']:
-                # Agar user remove kar diya gaya hai to record saf karein
+                # Agar user ko nikal diya gaya hai to DB record saaf karein
                 join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
                 is_member = False
         except Exception as e:
@@ -127,7 +127,6 @@ async def get_fsub_buttons(context, user_id, start_param):
         unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
 
     if has_unjoined:
-        # Dynamic Inline Callback for Try Again instead of URL
         unjoined_buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data=f"try_again_{start_param}")])
         return False, unjoined_buttons
     else:
@@ -229,9 +228,28 @@ async def send_files_logic(update, context, batch_key):
     except Exception:
         pass
 
-    alert_text = "🧹 **IMPORTANT NOTICE - Auto Deletion!** 🧹\n\nसभी फ़ाइलें **4 घंटे** में डिलीट हो जाएँगी! ⏳\n\nफ़ाइलों को अपने **Saved Messages** में फॉरवर्ड कर लें।
-    """
-    await context.bot.send_message(chat_id=chat_id, text=alert_text)
+    # FIXED MULTI-LINE STRING
+    alert_text = (
+        "🧹 IMPORTANT NOTICE - Auto Deletion! 🧹\n\n"
+        "सभी फ़ाइलें 4 घंटे में डिलीट हो जाएँगी! ⏳\n\n"
+        "फ़ाइलों को अपने Saved Messages में फॉरवर्ड कर लें।"
+    )
+    if is_cancelled:
+        alert_text += "\n\n⚠️ Process was cancelled by user."
+
+    try:
+        final_msg = await context.bot.send_message(
+            chat_id=chat_id,
+            text=alert_text, 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📟 UPDATE CHANNEL", url=CHANNEL_INVITE_LINK)]])
+        )
+        delete_col.insert_one({
+            "chat_id": chat_id, 
+            "message_ids": [final_msg.message_id], 
+            "delete_at": time.time() + 14400
+        })
+    except Exception:
+        pass
 
 # --- Command & Callbacks Handlers ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -252,7 +270,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_approved, buttons = await get_fsub_buttons(context, user.id, start_param)
     
     if not is_approved:
-        text = "Access Restricted!\n\nFiles receive karne ke liye niche diye gaye channels ko join/request karein:"
+        text = "Access Restricted!\n\nFiles receive karne ke liye niche दिए गए channels ko join/request karein:"
         await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(buttons))
         return
 
@@ -260,6 +278,8 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if start_param.startswith("batch_"):
         batch_key = start_param.replace("batch_", "")
         await send_files_logic(update, context, batch_key)
+    elif start_param:
+        await send_files_logic(update, context, start_param)
     else:
         await context.bot.send_message(chat_id=chat_id, text="Welcome! Send a valid link to get files.")
 
@@ -270,21 +290,19 @@ async def try_again_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     chat_id = query.message.chat_id
     
-    # Callback param extract (e.g., try_again_batch_xyz)
     data = query.data
     start_param = data.replace("try_again_", "") if "try_again_" in data else ""
 
     is_approved, buttons = await get_fsub_buttons(context, user.id, start_param)
     
     if not is_approved:
-        text = "Access Restricted!\n\nFiles receive karne ke liye niche diye gaye channels ko join/request karein:"
+        text = "Access Restricted!\n\nFiles receive karne ke liye niche दिए गए channels ko join/request karein:"
         try:
             await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(buttons))
         except Exception:
             pass
         return
 
-    # Verified successfully
     try:
         await query.delete_message()
     except Exception:
@@ -293,8 +311,10 @@ async def try_again_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if start_param.startswith("batch_"):
         batch_key = start_param.replace("batch_", "")
         await send_files_logic(update, context, batch_key)
+    elif start_param:
+        await send_files_logic(update, context, start_param)
     else:
-        await context.bot.send_message(chat_id=chat_id, text="✅ Verification complete! Aap ab bot use kar sakte hain.")
+        await context.bot.send_message(chat_id=chat_id, text="✅ Verification complete!")
 
 # Event listener to capture Channel Join Requests
 async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -318,7 +338,6 @@ async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         new_status = result.new_chat_member.status
 
         if new_status in ['left', 'kicked']:
-            # Channel se nikaale jaane par record hata do taaki phir se join karna pade
             join_req_col.delete_one({"user_id": user_id, "channel_id": channel_id})
 
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -330,6 +349,10 @@ async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Bot Setup
 def main():
+    if not TELEGRAM_BOT_TOKEN:
+        print("❌ TELEGRAM_BOT_TOKEN missing!")
+        return
+
     req = HTTPXRequest(connection_pool_size=8, read_timeout=20, write_timeout=20, connect_timeout=20)
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(req).post_init(run_post_init).build()
 
@@ -341,7 +364,7 @@ def main():
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
     app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
 
-    print("Bot operational with Fixed Try Again, Dynamic Keyboard & Excluded Member Auto-check...")
+    print("🤖 Bot Running (Fully Fixed)...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
