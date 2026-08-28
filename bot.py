@@ -14,27 +14,41 @@ from telegram.ext import (
 )
 from pymongo import MongoClient
 
-# Environment Credentials
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-MONGO_URI = os.getenv("MONGO_URI", "") 
+# --- CONFIGURATION (सब कुछ यहाँ सेट करें) ---
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+MONGO_URI = os.getenv("MONGO_URI", "YOUR_MONGO_URI_HERE")
+CHANNEL_INVITE_LINK = os.getenv("CHANNEL_INVITE_LINK", "https://t.me/AllstoryFM2") 
 
-# Admin IDs Setup
-ADMIN_IDS_RAW = os.getenv("ADMIN_ID", "0")
-ADMIN_IDS = [int(aid.strip()) for aid in ADMIN_IDS_RAW.split(",") if aid.strip().isdigit()]
+# Hardcoded Force Join Channels (यहाँ अपने सभी Channels की Details डालें)
+FORCE_JOIN_CHANNELS = [
+    {
+        "channel_id": -1003982333880,
+        "title": "Backup Channel 1",
+        "link": "https://t.me/+Yn1F0Pju33QzY2Nl"
+    },
+    {
+        "channel_id": -1004333260005,
+        "title": "JOIN CHANNEL 2",
+        "link": "https://t.me/+BPsh855KDVBhYzQ1"
+    },
+    {
+        "channel_id": -1003955164011,
+        "title": "All story FM 3",
+        "link": "https://t.me/AllstoryFM2"
+    },
+    {
+        "channel_id": -1003984093378,
+        "title": "Channel 4",
+        "link": "https://t.me/+EFvk-wHAJC1lNTM1"
+]
 
-CHANNEL_INVITE_LINK = os.getenv("CHANNEL_INVITE_LINK", "") 
-
-# MongoDB Setup
+# MongoDB Setup (केवल File Storage और Requests ट्रैकिंग के लिए)
 client = MongoClient(MONGO_URI)
 primary_db = client['bot_primary_db']
 
 user_col = primary_db['users']
 delete_col = primary_db['delete_queue'] 
 registry_col = primary_db['batch_registry']
-config_col = primary_db['bot_config']
-
-# Force Sub & Join Request Collections
-fsub_col = primary_db['force_sub_channels']
 join_req_col = primary_db['join_requests_data']
 
 cancel_status = {}
@@ -48,28 +62,28 @@ def get_readable_size(size_in_bytes):
         size_in_bytes /= 1024.0
     return f"{size_in_bytes:.2f} PB"
 
-# --- Force Sub Verification ---
+# --- Force Join Verification Logic ---
 async def get_fsub_buttons(context, user_id, start_param):
-    channels = list(fsub_col.find())
-    if not channels:
+    if not FORCE_JOIN_CHANNELS:
         return True, [] 
 
     unjoined_buttons = []
     has_unjoined = False
 
-    for ch in channels:
+    for ch in FORCE_JOIN_CHANNELS:
         ch_id = ch["channel_id"]
-        ch_link = ch["invite_link"]
-        ch_title = ch.get("title", "Join Channel")
+        ch_link = ch["link"]
+        ch_title = ch["title"]
 
         is_member = False
         
+        # 1. Real-time Status Check
         try:
             member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status in ['member', 'administrator', 'creator']:
                 is_member = True
             elif member.status in ['left', 'kicked']:
-                # यूजर निकाला गया है तो रिकॉर्ड साफ करें
+                # यूजर को निकाल दिया गया है तो पुराना Join Request रिकॉर्ड डिलीट करें
                 join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
                 is_member = False
         except TelegramError:
@@ -78,7 +92,7 @@ async def get_fsub_buttons(context, user_id, start_param):
         if is_member:
             continue
 
-        # Check Active Join Request
+        # 2. Check Active Join Request (क्या यूज़र ने Request to Join बटन दबाया है)
         has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
         if has_requested:
             continue
@@ -93,7 +107,7 @@ async def get_fsub_buttons(context, user_id, start_param):
     else:
         return True, []
 
-# --- Auto Delete Background Service ---
+# --- Auto Delete Service ---
 async def auto_delete_monitor(app):
     while True:
         try:
@@ -109,13 +123,13 @@ async def auto_delete_monitor(app):
                     await asyncio.sleep(0.1) 
                 delete_col.delete_one({"_id": task['_id']})
         except Exception as e: 
-            print(f"Auto-Delete Monitor Error: {e}")
+            print(f"Auto-Delete Error: {e}")
         await asyncio.sleep(15)
 
 async def run_post_init(application):
     asyncio.create_task(auto_delete_monitor(application))
 
-# --- File Dispatcher ---
+# --- File Sending Logic ---
 async def send_files_logic(update, context, batch_key):
     user = update.effective_user
     chat_id = update.effective_chat.id
@@ -181,9 +195,7 @@ async def send_files_logic(update, context, batch_key):
         pass
 
     alert_text = (
-        "🧹 IMPORTANT NOTICE - Auto Deletion! 🧹\n\n"
-        "सभी फ़ाइलें 4 घंटे में डिलीट हो जाएँगी! ⏳\n\n"
-        "फ़ाइलों को अपने Saved Messages में फॉरवर्ड कर लें।"
+        "𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 𝟾 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴."
     )
     
     final_msg = await context.bot.send_message(
@@ -259,6 +271,7 @@ async def try_again_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await context.bot.send_message(chat_id=chat_id, text="✅ Verification complete! Aap ab files le sakte hain.")
 
+# Join Request Event Listener (जब यूज़र 'Request to join' बटन दबाएगा)
 async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     req = update.chat_join_request
     if req:
@@ -268,6 +281,7 @@ async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             upsert=True
         )
 
+# Member Status Listener (यूज़र के लीव करने या रिमूव होने पर)
 async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = update.chat_member
     if result and result.new_chat_member.status in ['left', 'kicked']:
@@ -297,9 +311,9 @@ def main():
     app.add_handler(ChatJoinRequestHandler(join_request_handler))
     app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
 
-    print("🤖 Bot Active & Fixed!")
+    print("🤖 Bot Ready (All Hardcoded FSub Activated)...")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
-    
+                                                        
