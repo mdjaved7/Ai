@@ -476,7 +476,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"📥 Total Requests: {total_reqs}\n"
                 f"🗄️ Active DB Storage: {storage_text}"
             )
-         except Exception as e:
+    except Exception as e:
             await update.message.reply_text(f"❌ Stats calculation error: {e}")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -672,3 +672,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+   
