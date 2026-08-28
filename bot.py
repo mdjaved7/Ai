@@ -36,11 +36,13 @@ FORCE_JOIN_CHANNELS = [
         "title": "All story FM 3",
         "link": "https://t.me/AllstoryFM2"
     },
-    ,{
+    {
         "channel_id": -1003984093378,
         "title": "Channel 4",
         "link": "https://t.me/+EFvk-wHAJC1lNTM1"
-]
+    }  # <--- यहाँ '}' से डिक्शनरी बंद करें
+]      # <--- फिर ']' से लिस्ट बंद करें
+
 
 # MongoDB Setup (केवल File Storage और Requests ट्रैकिंग के लिए)
 client = MongoClient(MONGO_URI)
@@ -316,4 +318,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-                                                        
+
+    
