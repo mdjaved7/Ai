@@ -139,7 +139,6 @@ async def get_fsub_buttons(context, user_id, start_param):
 
         is_member = False
         
-        # Check Live Member Status
         try:
             member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status in ['member', 'administrator', 'creator']:
@@ -152,14 +151,12 @@ async def get_fsub_buttons(context, user_id, start_param):
             joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
-        # Check Pending Request in DB
         has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
         
         if has_requested:
             joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
-        # Neither member nor requested
         has_unjoined = True
         unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
 
@@ -349,21 +346,37 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Verify Token Link Check
     if raw_param.startswith("verify_"):
-        parts = raw_param.split("_", 2)
+        parts = raw_param.split("_")
         try:
             token_user_id = int(parts[1])
             if token_user_id == user.id:
                 renew_user_token(user.id)
-                if len(parts) > 2:
-                    target_batch = parts[2]
+                # Agar BATCHKEY pass hui hai
+                if len(parts) >= 3:
+                    target_batch = "_".join(parts[2:])
                 else:
-                    await update.message.reply_text("✅ <b>Your Access Token has been successfully renewed for 4 hours!</b>\n\nAb aap apne file link par click karke files le sakte hain.", parse_mode="HTML")
+                    await update.message.reply_text(
+                        "🎉 <b>Access Token Successfully Renewed!</b>\n\n"
+                        "✅ Aapko agle <b>4 ghante</b> ke liye full access mil gaya hai.\n"
+                        "👉 Ab aap apni pasandida file ke link par dobara click karke files prapt kar sakte hain!",
+                        parse_mode="HTML"
+                    )
                     return
         except Exception as e:
-            print(f"Token Verification Error: {e}")
+            print(f"Token Verification Parsing Error: {e}")
 
     if not target_batch:
         target_batch = raw_param
+
+    # Agar token verify karne ki wajah se 'verify_' likha aa raha hai aur aage koi batch ID nahi mili:
+    if target_batch.startswith("verify_"):
+        await update.message.reply_text(
+            "🎉 <b>Access Token Successfully Renewed!</b>\n\n"
+            "✅ Aapko agle <b>4 ghante</b> ke liye full access mil gaya hai.\n"
+            "👉 Ab aap apni file ke link par dobara click kar sakte hain!",
+            parse_mode="HTML"
+        )
+        return
 
     # 1. Force Sub Check
     has_joined_all, fsub_buttons = await get_fsub_buttons(context, user.id, target_batch)
