@@ -4,31 +4,41 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ContextTypes, filters
+from telegram.error import TelegramError
+from telegram.ext import (
+    ApplicationBuilder, 
+    MessageHandler, 
+    CommandHandler, 
+    CallbackQueryHandler,
+    ChatJoinRequestHandler,
+    ChatMemberHandler,
+    ContextTypes, 
+    filters
+)
 from pymongo import MongoClient
-from bson.objectid import ObjectId
 
-# 🔑 अपनी डिटेल्स यहाँ भरें
+# 🔑 Configuration
 TELEGRAM_BOT_TOKEN = "8933588495:AAGI5TLmfV8wob7GY8aUHY4k8gflDRxb0dY"
 MONGO_URI = "mongodb+srv://mybot7:mdjaved11@cluster0.kz1njzu.mongodb.net/?appName=Cluster0"
 ADMIN_ID = 6598432032        
 PRIVATE_STORE_ID = -1004319812230  
 
-# 📢 4 चैनल्स के डिटेल्स (Username और Invite Links)
+# 📢 Force Join Channels (Channel ID, Name, and Link)
 FORCE_SUB_CHANNELS = [
-    {"username": "@AllstoryFM2", "link": "https://t.me/AllstoryFM2", "name": "Channel 1"},
-    {"username": "@JOINCHANNELl  1", "link": "https://t.me/+Yn1F0Pju33QzY2Nl", "name": "Channel 2"},
-    {"username": "@JOINCHANNELl  2", "link": "https://t.me/+BPsh855KDVBhYzQ1", "name": "Channel 3"},
-    {"username": "@JOINCHANNELl  3", "link": "https://t.me/+EFvk-wHAJC1lNTM1", "name": "Channel 4"}
+    {"channel_id": -1003955164011, "name": "Channel 1", "link": "https://t.me/AllstoryFM2"},
+    {"channel_id": -1003982333880, "name": "Channel 2", "link": "https://t.me/+Yn1F0Pju33QzY2Nl"},
+    {"channel_id": -1004333260005, "name": "Channel 3", "link": "https://t.me/+BPsh855KDVBhYzQ1"},
+    {"channel_id": -1003984093378, "name": "Channel 4", "link": "https://t.me/+EFvk-wHAJC1lNTM1"}
 ]
 
-# MongoDB सेटअप
+# MongoDB Setup
 client = MongoClient(MONGO_URI)
 db = client['bot_database']
 batch_col = db['file_batches']
 user_col = db['users']
 delete_col = db['delete_queue'] 
 history_col = db['user_history']  
+join_req_col = db['join_requests']
 
 user_queues = {}
 backup_queues = {}
@@ -41,58 +51,111 @@ async def auto_delete_monitor(app):
             for task in all_pending:
                 chat_id = task['chat_id']
                 for msg_id in task['message_ids']:
-                    try: await app.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-                    except: pass
+                    try: 
+                        await app.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                    except: 
+                        pass
                     await asyncio.sleep(0.1) 
                 delete_col.delete_one({"_id": task['_id']})
-        except Exception as e: print(f"ऑटो-डिलीट मॉनिटर एरर: {e}")
+        except Exception as e: 
+            print(f"Auto-Delete Error: {e}")
         await asyncio.sleep(15)
 
 async def run_post_init(application):
     asyncio.create_task(auto_delete_monitor(application))
 
-# 🔍 चारों चैनलों के लिए सब्सक्रिप्शन चेक फ़ंक्शन
-async def check_user_joined(context, user_id):
+# 🔍 Multi-layer Channel Verification Logic
+async def get_fsub_buttons(context, user_id, batch_key):
     unjoined_channels = []
-    for ch in FORCE_SUB_CHANNELS:
-        try:
-            member = await context.bot.get_chat_member(chat_id=ch["username"], user_id=user_id)
-            if member.status not in ['member', 'administrator', 'creator']:
-                unjoined_channels.append(ch)
-        except:
-            unjoined_channels.append(ch)
-    return unjoined_channels
-
-async def send_files_logic(update, context, batch_key):
-    user = update.effective_user
-    batch = batch_col.find_one({"batch_key": batch_key})
     
+    for ch in FORCE_SUB_CHANNELS:
+        ch_id = ch["channel_id"]
+        is_member = False
+
+        # 1. Real-time Member Check
+        try:
+            member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
+            if member.status in ['member', 'administrator', 'creator']:
+                is_member = True
+            elif member.status in ['left', 'kicked']:
+                join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
+                is_member = False
+        except Exception as e:
+            print(f"Check member error for {ch_id}: {e}")
+
+        if is_member:
+            continue
+
+        # 2. Check Active Join Request (If 'Request to Join' was clicked)
+        has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
+        if has_requested:
+            continue
+
+        unjoined_channels.append(ch)
+
+    if unjoined_channels:
+        buttons = []
+        for ch in unjoined_channels:
+            buttons.append([InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['link'])])
+        
+        cb_data = f"try_again_{batch_key}" if batch_key else "try_again_check"
+        buttons.append([InlineKeyboardButton("🔄 Try Again", callback_data=cb_data)])
+        return False, buttons
+    
+    return True, []
+
+async def send_files_logic(update_or_query, context, batch_key, is_callback=False):
+    chat_id = update_or_query.message.chat_id if is_callback else update_or_query.message.chat_id
+    user = update_or_query.from_user if is_callback else update_or_query.effective_user
+    
+    batch = batch_col.find_one({"batch_key": batch_key})
     if not batch:
-        await update.message.reply_text("❌ यह लिंक अमान्य है।")
+        await context.bot.send_message(chat_id=chat_id, text="❌ यह लिंक अमान्य या एक्सपायर हो गया है।")
         return
 
-    history_col.insert_one({"user_id": user.id, "first_name": user.first_name, "username": user.username, "action": "requested_files", "batch_key": batch_key, "time": datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y-%m-%d %H:%M:%S')})
+    history_col.insert_one({
+        "user_id": user.id, 
+        "first_name": user.first_name, 
+        "username": user.username, 
+        "action": "requested_files", 
+        "batch_key": batch_key, 
+        "time": datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y-%m-%d %H:%M:%S')
+    })
     
-    info_msg = await update.message.reply_text("⏳ Sending files...")
+    info_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ Sending files...")
     sent_message_ids = [info_msg.message_id]
     delete_at_time = time.time() + 28800 
     
-    for file in batch["files"]:
+    for file in batch.get("files", []):
         try:
             sent_msg = None
-            if file['file_type'] == 'document': sent_msg = await update.message.reply_document(file['file_id'], protect_content=True)
-            elif file['file_type'] == 'video': sent_msg = await update.message.reply_video(file['file_id'], protect_content=True)
-            elif file['file_type'] == 'photo': sent_msg = await update.message.reply_photo(file['file_id'], protect_content=True)
-            elif file['file_type'] == 'audio': sent_msg = await update.message.reply_audio(file['file_id'], protect_content=True)
+            if file['file_type'] == 'document': 
+                sent_msg = await context.bot.send_document(chat_id, file['file_id'], protect_content=True)
+            elif file['file_type'] == 'video': 
+                sent_msg = await context.bot.send_video(chat_id, file['file_id'], protect_content=True)
+            elif file['file_type'] == 'photo': 
+                sent_msg = await context.bot.send_photo(chat_id, file['file_id'], protect_content=True)
+            elif file['file_type'] == 'audio': 
+                sent_msg = await context.bot.send_audio(chat_id, file['file_id'], protect_content=True)
             
-            if sent_msg: sent_message_ids.append(sent_msg.message_id)
+            if sent_msg: 
+                sent_message_ids.append(sent_msg.message_id)
             await asyncio.sleep(0.4) 
-        except: break
+        except Exception as e:
+            print(f"File sending error: {e}")
+            break
 
-    delete_col.insert_one({"chat_id": update.message.chat_id, "message_ids": sent_message_ids, "delete_at": delete_at_time})
-    try: await context.bot.delete_message(chat_id=update.message.chat_id, message_id=info_msg.message_id)
-    except: pass
-    await update.message.reply_text("𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 𝟾 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴.", parse_mode="Markdown")
+    delete_col.insert_one({"chat_id": chat_id, "message_ids": sent_message_ids, "delete_at": delete_at_time})
+    try: 
+        await context.bot.delete_message(chat_id=chat_id, message_id=info_msg.message_id)
+    except: 
+        pass
+        
+    await context.bot.send_message(
+        chat_id=chat_id, 
+        text="𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 𝟾 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴.", 
+        parse_mode="Markdown"
+    )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -100,29 +163,76 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_col.insert_one({"user_id": user.id, "username": user.username, "first_name": user.first_name})
 
     args = context.args
-    if args:
-        batch_key = args[0]
-        unjoined = await check_user_joined(context, user.id)
-        
-        # यदि यूज़र ने कोई भी चैनल जॉइन नहीं किया है
-        if unjoined:
-            buttons = []
-            for ch in unjoined:
-                buttons.append([InlineKeyboardButton(f"📢 Join {ch['name']}", url=ch['link'])])
-            
-            # पुनः प्रयास (Try Again) का बटन
-            buttons.append([InlineKeyboardButton("🔄 Try Again", url=f"https://t.me/{(await context.bot.get_me()).username}?start={batch_key}")])
-            
-            await update.message.reply_text(
-                "⚠️ फाइल्स प्राप्त करने के लिए कृपया नीचे दिए गए सभी चैनलों को जॉइन करें:",
-                reply_markup=InlineKeyboardMarkup(buttons)
-            )
-            return
-            
-        asyncio.create_task(send_files_logic(update, context, batch_key))
-        return
-    await update.message.reply_text("👋 Hello! I am a permanent batch file store bot.")
+    batch_key = args[0] if args else ""
 
+    is_approved, buttons = await get_fsub_buttons(context, user.id, batch_key)
+    if not is_approved:
+        await update.message.reply_text(
+            "⚠️ फाइल्स प्राप्त करने के लिए कृपया नीचे दिए गए सभी चैनलों को जॉइन/रिक्वेस्ट करें:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+        return
+
+    if batch_key:
+        asyncio.create_task(send_files_logic(update, context, batch_key))
+    else:
+        await update.message.reply_text("👋 Hello! I am a permanent batch file store bot.")
+
+# 🔄 'Try Again' Callback Handler
+async def try_again_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    try:
+        await query.answer("Status check kar rahe hain...")
+    except:
+        pass
+
+    user = query.from_user
+    chat_id = query.message.chat_id
+    data = query.data
+
+    batch_key = data.replace("try_again_", "") if "try_again_" in data else ""
+    if batch_key == "check":
+        batch_key = ""
+
+    is_approved, buttons = await get_fsub_buttons(context, user.id, batch_key)
+    
+    if not is_approved:
+        text = "⚠️ फाइल्स प्राप्त करने के लिए कृपया नीचे दिए गए सभी चैनलों को जॉइन/रिक्वेस्ट करें:"
+        try:
+            await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(buttons))
+        except TelegramError as e:
+            if "Message is not modified" not in str(e):
+                try: await query.message.delete()
+                except: pass
+                await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=InlineKeyboardMarkup(buttons))
+        return
+
+    try:
+        await query.message.delete()
+    except:
+        pass
+
+    if batch_key:
+        await send_files_logic(query, context, batch_key, is_callback=True)
+    else:
+        await context.bot.send_message(chat_id=chat_id, text="✅ Verification Complete! Aap ab files le sakte hain.")
+
+# 📩 Event Handlers for Join Requests and Member Updates
+async def join_request_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    req = update.chat_join_request
+    if req:
+        join_req_col.update_one(
+            {"user_id": req.from_user.id, "channel_id": req.chat.id},
+            {"$set": {"timestamp": time.time()}},
+            upsert=True
+        )
+
+async def chat_member_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    result = update.chat_member
+    if result and result.new_chat_member.status in ['left', 'kicked']:
+        join_req_col.delete_one({"user_id": result.from_user.id, "channel_id": result.chat.id})
+
+# --- Admin Functions ---
 async def check_logs(update, context):
     if update.effective_user.id != ADMIN_ID: return
     logs = list(history_col.find().sort("_id", -1).limit(15))
@@ -178,12 +288,20 @@ async def store_file(update, context):
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).post_init(run_post_init).build()
+    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("logs", check_logs))
     app.add_handler(CommandHandler("getlink", get_link_manually))
     app.add_handler(CommandHandler("broadcast", broadcast))
+    
+    # Handlers for FSub Check & Verification
+    app.add_handler(CallbackQueryHandler(try_again_handler, pattern="^try_again"))
+    app.add_handler(ChatJoinRequestHandler(join_request_handler))
+    app.add_handler(ChatMemberHandler(chat_member_handler, ChatMemberHandler.CHAT_MEMBER))
+    
     app.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.ALL & ~filters.COMMAND, store_file))
+    
     print("🤖 Bot is running on MongoDB!")
     app.run_polling(drop_pending_updates=True)
     
