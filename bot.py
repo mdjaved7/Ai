@@ -50,7 +50,7 @@ config_col = primary_db['bot_config']
 
 # Dynamic Multi Force Join Collection
 fsub_col = primary_db['force_sub_channels']
-join_req_col = primary_db['join_requests_data'] # Collection for pending requests
+join_req_col = primary_db['join_requests_data']
 
 user_queues = {}
 backup_queues = {}
@@ -139,28 +139,27 @@ async def get_fsub_buttons(context, user_id, start_param):
 
         is_member = False
         
-        # Check Live Status
+        # Check Live Member Status
         try:
             member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
             if member.status in ['member', 'administrator', 'creator']:
                 is_member = True
-                # User channel me active hai, to old pending request delete kardo
                 join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Chat Member Check Error ({ch_id}): {e}")
 
         if is_member:
             joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
-        # If user is not member right now, check pending join request in DB
+        # Check Pending Request in DB
         has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
         
         if has_requested:
             joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
-        # User is neither member nor has pending request (e.g. left/removed)
+        # Neither member nor requested
         has_unjoined = True
         unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
 
@@ -172,7 +171,7 @@ async def get_fsub_buttons(context, user_id, start_param):
     else:
         return True, []
 
-# --- System Background Operations ---
+# --- Background Services ---
 async def database_storage_checker(app):
     while True:
         try:
@@ -183,15 +182,16 @@ async def database_storage_checker(app):
             if storage_size_mb >= 450.0:
                 alert_text = (
                     f"⚠️ <b>MONGODB STORAGE WARNING!</b> ⚠️\n\n"
-                    f"Current Active File DB ({active_name}) full hone wala hai!\n"
-                    f"<b>Current Usage:</b> {storage_size_mb:.2f} MB / 512 MB\n\n"
-                    f"System automatically naye database par shift ho raha hai."
+                    f"Active DB ({active_name}) full hone wala hai!\n"
+                    f"<b>Current Usage:</b> {storage_size_mb:.2f} MB / 512 MB"
                 )
                 for adm in ADMIN_IDS:
-                    try: await app.bot.send_message(chat_id=adm, text=alert_text, parse_mode="HTML")
-                    except: pass
+                    try:
+                        await app.bot.send_message(chat_id=adm, text=alert_text, parse_mode="HTML")
+                    except Exception:
+                        pass
         except Exception as e:
-            print(f"Database storage check error: {e}")
+            print(f"Database check error: {e}")
         await asyncio.sleep(3600)
 
 async def auto_delete_monitor(app):
@@ -202,12 +202,14 @@ async def auto_delete_monitor(app):
             for task in all_pending:
                 chat_id = task['chat_id']
                 for msg_id in task['message_ids']:
-                    try: await app.bot.delete_message(chat_id=chat_id, message_id=msg_id)
-                    except: pass
+                    try:
+                        await app.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+                    except Exception:
+                        pass
                     await asyncio.sleep(0.1) 
                 delete_col.delete_one({"_id": task['_id']})
         except Exception as e: 
-            print(f"Auto-Delete Monitor Error: {e}")
+            print(f"Auto-Delete Error: {e}")
         await asyncio.sleep(15)
 
 async def run_post_init(application):
@@ -229,7 +231,7 @@ async def send_files_logic(update, context, batch_key):
         batch = client['bot_database']['file_batches'].find_one({"batch_key": batch_key})
     
     if not batch:
-        await context.bot.send_message(chat_id=chat_id, text="❌ Yeh link amanaye (invalid) hai.")
+        await context.bot.send_message(chat_id=chat_id, text="❌ Link invalid ya expire ho chuka hai.")
         return
 
     try:
@@ -241,7 +243,7 @@ async def send_files_logic(update, context, batch_key):
             "batch_key": batch_key, 
             "time": datetime.now(ZoneInfo("Asia/Kolkata")).strftime('%Y-%m-%d %H:%M:%S')
         })
-    except:
+    except Exception:
         pass
     
     info_msg = await context.bot.send_message(
@@ -278,13 +280,13 @@ async def send_files_logic(update, context, batch_key):
                     f"🔥"
                 )
 
-            if file['file_type'] == 'document': 
+            if file_type == 'document': 
                 sent_msg = await context.bot.send_document(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
-            elif file['file_type'] == 'video': 
+            elif file_type == 'video': 
                 sent_msg = await context.bot.send_video(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
-            elif file['file_type'] == 'photo': 
+            elif file_type == 'photo': 
                 sent_msg = await context.bot.send_photo(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
-            elif file['file_type'] == 'audio': 
+            elif file_type == 'audio': 
                 sent_msg = await context.bot.send_audio(chat_id, file['file_id'], protect_content=True, caption=custom_caption)
 
             if sent_msg: 
@@ -301,14 +303,17 @@ async def send_files_logic(update, context, batch_key):
                 "message_ids": sent_message_ids, 
                 "delete_at": time.time() + 14400 
             })
-        except:
+        except Exception:
             pass
 
-    try: await context.bot.delete_message(chat_id=chat_id, message_id=info_msg.message_id)
-    except: pass
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=info_msg.message_id)
+    except Exception:
+        pass
 
     alert_text = "𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 4 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴."
-    if is_cancelled: alert_text += "\n\n⚠️ *Process was cancelled by user.*"
+    if is_cancelled:
+        alert_text += "\n\n⚠️ *Process was cancelled by user.*"
 
     try:
         final_msg = await context.bot.send_message(
@@ -322,7 +327,8 @@ async def send_files_logic(update, context, batch_key):
             "message_ids": [final_msg.message_id], 
             "delete_at": time.time() + 14400
         })
-    except: pass
+    except Exception:
+        pass
 
 # --- Command Handler: /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -330,17 +336,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not user_col.find_one({"user_id": user.id}):
             user_col.insert_one({"user_id": user.id, "username": user.username, "first_name": user.first_name})
-    except: pass
+    except Exception:
+        pass
         
     args = context.args
     if not args:
-        await update.message.reply_text("🗄️ Your automation scripts are securely archived 🛡️, fully optimized ⚙️, and ready for instant deployment 🚀💻⚡. Ready when you are! 🎯🔥")
+        await update.message.reply_text("🗄️ Your automation scripts are securely archived 🛡️, fully optimized ⚙️, and ready for instant deployment 🚀💻⚡.")
         return
 
     raw_param = args[0]
     target_batch = None
 
-    # Verify Token Link check (verify_USERID or verify_USERID_BATCHKEY)
+    # Verify Token Link Check
     if raw_param.startswith("verify_"):
         parts = raw_param.split("_", 2)
         try:
@@ -358,7 +365,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not target_batch:
         target_batch = raw_param
 
-    # CHECK 1: FORCE JOIN CHECK MUST ALWAYS HAPPEN FIRST!
+    # 1. Force Sub Check
     has_joined_all, fsub_buttons = await get_fsub_buttons(context, user.id, target_batch)
     if not has_joined_all:
         await update.message.reply_text(
@@ -368,7 +375,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # CHECK 2: ACCESS TOKEN CHECK
+    # 2. Token Check
     if not is_token_valid(user.id):
         bot_info = await context.bot.get_me()
         long_target_url = f"https://t.me/{bot_info.username}?start=verify_{user.id}_{target_batch}"
@@ -378,7 +385,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⚠️ <b>ACCESS TOKEN EXPIRED!</b> ⚠️\n\n"
             "<i>Your previous access session has ended. Please renew your token to continue downloading files smoothly.</i> ♻️\n\n"
             "⏳ <b>Token Validity:</b> 4 Hours\n\n"
-            "💡 <i>This is a quick ads-based verification. Completing just 1 token grants you uninterrupted access to all shareable file links for the next 4 hours!</i> ✨"
+            "💡 <i>Completing just 1 token grants you uninterrupted access to all shareable file links for the next 4 hours!</i> ✨"
         )
         
         token_buttons = InlineKeyboardMarkup([
@@ -390,10 +397,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(token_msg, parse_mode="HTML", reply_markup=token_buttons)
         return
 
-    # ALL CHECKS PASSED -> DELIVER FILES
+    # 3. Deliver Files
     asyncio.create_task(send_files_logic(update, context, target_batch))
 
-# --- Dynamic Admin Multi-Force Join Management Commands ---
+# --- Admin Dynamic Force-Sub Commands ---
 async def add_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
     if len(context.args) < 3:
@@ -425,7 +432,7 @@ async def del_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if res.deleted_count > 0:
             await update.message.reply_text(f"✅ Channel <code>{ch_id}</code> removed from Force-Sub list.", parse_mode="HTML")
         else:
-            await update.message.reply_text("❌ Specified Channel ID not found.")
+            await update.message.reply_text("❌ Channel ID not found.")
     except Exception as e:
         await update.message.reply_text(f"❌ Error removing channel: {e}")
 
@@ -433,7 +440,7 @@ async def list_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS: return
     channels = list(fsub_col.find())
     if not channels:
-        await update.message.reply_text("📁 Force Join list is currently empty.")
+        await update.message.reply_text("📁 Force Join list is empty.")
         return
     
     msg = "📢 <b>Active Force Join Channels:</b>\n\n"
@@ -441,75 +448,15 @@ async def list_channels(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += f"{idx}. <b>{ch.get('title')}</b>\n🆔 <code>{ch.get('channel_id')}</code>\n🔗 {ch.get('invite_link')}\n\n"
     await update.message.reply_text(msg, parse_mode="HTML")
 
-# --- Admin Monitoring Commands ---
-async def check_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    try:
-        logs = list(history_col.find().sort("_id", -1).limit(15))
-        log_text = "📊 Recent Logs:\n\n" + "".join([f"👤 {e.get('first_name')}\n📥 {e.get('batch_key')}\n⏰ {e.get('time')}\n\n" for e in logs])
-        await update.message.reply_text(log_text)
-    except Exception as e:
-        await update.message.reply_text(f"❌ Logs load karne me error: {e}")
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id in ADMIN_IDS: 
-        try:
-            total_users = user_col.count_documents({})
-            total_reqs = history_col.count_documents({})
-            
-            active_db, active_name = get_active_file_db()
-            try:
-                stats_cmd = active_db.command("dbStats")
-                storage_bytes = stats_cmd.get("storageSize", stats_cmd.get("dataSize", 0))
-                
-                if storage_bytes < 1024 * 1024:
-                    storage_kb = storage_bytes / 1024
-                    storage_text = f"{storage_kb:.2f} KB ({active_name})"
-                else:
-                    storage_mb = storage_bytes / (1024 * 1024)
-                    storage_text = f"{storage_mb:.2f} MB ({active_name})"
-            except Exception as db_err:
-                storage_text = "Unavailable"
-
-            await update.message.reply_text(
-                f"👥 Total Users: {total_users}\n"
-                f"📥 Total Requests: {total_reqs}\n"
-                f"🗄️ Active DB Storage: {storage_text}"
-            )
-    except Exception as e:
-            await update.message.reply_text(f"❌ Stats calculation error: {e}")
-
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id not in ADMIN_IDS: return
-    if not context.args and not update.message.reply_to_message:
-        await update.message.reply_text("❌ Kuch text likhein ya kisi message ko reply karein.")
-        return
-        
-    await update.message.reply_text("📢 Broadcast shuru ho raha hai...")
-    success = 0
-    failed = 0
-    for user in user_col.find():
-        try:
-            if update.message.reply_to_message: 
-                await context.bot.copy_message(user['user_id'], update.message.chat_id, update.message.reply_to_message.message_id)
-            else: 
-                await context.bot.send_message(user['user_id'], " ".join(context.args))
-            success += 1
-            await asyncio.sleep(0.05)
-        except Exception as e:
-            failed += 1
-            if "Forbidden" in str(e): 
-                try: user_col.delete_one({"user_id": user['user_id']})
-                except: pass
-    await update.message.reply_text(f"✅ Broadcast Complete!\n🟢 Success: {success}\n🔴 Failed/Blocked: {failed}")
-
-# --- Callbacks & Batch Storage ---
+# --- Callbacks & Handlers ---
 async def cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
     cancel_status[user_id] = True 
-    try: await query.message.delete()
-    except: pass
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
     await query.answer("❌ Files bhejna rok diya gaya hai.")
 
 async def token_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -521,8 +468,10 @@ async def token_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if is_token_valid(user_id):
         await query.answer("✅ Access Token active hai!", show_alert=False)
-        try: await query.message.delete()
-        except: pass
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
         if batch_key:
             has_joined_all, fsub_buttons = await get_fsub_buttons(context, user_id, batch_key)
             if not has_joined_all:
@@ -534,8 +483,9 @@ async def token_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
             asyncio.create_task(send_files_logic(update, context, batch_key))
     else:
-        await query.answer("❌ Token abhi verified nahi hai! Pehle 'Renew Access Token' par click karke token verify karein.", show_alert=True)
+        await query.answer("❌ Token abhi verified nahi hai! Pehle 'Renew Access Token' par click karein.", show_alert=True)
 
+# --- Batch Storage & Forwarding ---
 async def process_batch_queue(user_id, context, message):
     await asyncio.sleep(15)
     if user_id not in user_queues: return
@@ -571,7 +521,7 @@ async def process_batch_queue(user_id, context, message):
                         break
 
     backup_queues[user_id] = saved_files
-    await message.reply_text("✅ Batch stored! Now send /getlink command to get the shareable batch link.")
+    await message.reply_text("✅ Batch stored! /getlink command bhejkar link generate karein.")
 
 async def handle_incoming_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -609,9 +559,8 @@ async def get_link_manually(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Link generation error: {e}")
 
-# --- Member Action & Join Request Event Listeners ---
+# --- Event Listeners ---
 async def handle_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Clean up request record whenever user status in channel changes."""
     try:
         result = update.chat_member
         if result:
@@ -631,45 +580,38 @@ async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE
             {"$set": {"status": "requested", "time": time.time()}},
             upsert=True
         )
-            
     except Exception as e:
         print(f"Join Request Handling Error: {e}")
 
-# --- Application Startup ---
+# --- App Startup ---
 def main():
     if not TELEGRAM_BOT_TOKEN:
-        print("❌ TELEGRAM_BOT_TOKEN missing in environment configuration.")
+        print("❌ TELEGRAM_BOT_TOKEN missing!")
         return
 
     request_kwargs = HTTPXRequest(connect_timeout=20.0, read_timeout=20.0)
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).request(request_kwargs).post_init(run_post_init).build()
 
-    # Core Handlers
+    # Commands
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("logs", check_logs))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CommandHandler("getlink", get_link_manually))
-    
-    # Dynamic Multi Force-Sub Admin Handlers
     app.add_handler(CommandHandler("addchannel", add_channel))
     app.add_handler(CommandHandler("delchannel", del_channel))
     app.add_handler(CommandHandler("channels", list_channels))
     
-    # Inline Callback Handlers
+    # Callbacks
     app.add_handler(CallbackQueryHandler(cancel_callback, pattern="^cancel_action$"))
     app.add_handler(CallbackQueryHandler(token_callback, pattern="^check_token_"))
     
-    # File Media Handlers
+    # Files
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.PHOTO | filters.AUDIO, handle_incoming_files))
 
     # Event Handlers
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
     app.add_handler(ChatMemberHandler(handle_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
 
-    print("🤖 Bot running with fixed Force-Sub & Seamless Token Flow...")
+    print("🤖 Bot Running...")
     app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
-   
