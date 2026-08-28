@@ -13,6 +13,7 @@ from telegram.ext import (
     CommandHandler, 
     CallbackQueryHandler,
     ChatJoinRequestHandler,
+    ChatMemberHandler,
     ContextTypes, 
     filters
 )
@@ -136,24 +137,35 @@ async def get_fsub_buttons(context, user_id, start_param):
         ch_link = ch["invite_link"]
         ch_title = ch.get("title", "Join Channel")
 
-        # Check 1: DB check for pending request
+        is_member = False
+        
+        # Check 1: LIVE STATUS CHECK FIRST
+        try:
+            member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
+            if member.status in ['member', 'administrator', 'creator']:
+                is_member = True
+                # User channel me hai, to unka purana bypass token delete kar do
+                join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
+            elif member.status in ['kicked', 'banned']:
+                # User block hai, to bypass delete kar do
+                join_req_col.delete_one({"user_id": user_id, "channel_id": ch_id})
+        except Exception:
+            pass
+
+        if is_member:
+            joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
+            continue
+
+        # Check 2: DB Check For Pending Request
         has_requested = join_req_col.find_one({"user_id": user_id, "channel_id": ch_id})
         
         if has_requested:
             joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
             continue
 
-        # Check 2: Regular member check if no request found in DB
-        try:
-            member = await context.bot.get_chat_member(chat_id=ch_id, user_id=user_id)
-            if member.status in ['member', 'administrator', 'creator']:
-                joined_buttons.append([InlineKeyboardButton(f"✅ {ch_title}", url=ch_link)])
-            else:
-                has_unjoined = True
-                unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
-        except Exception as e:
-            has_unjoined = True
-            unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
+        # If user is neither a member nor has a pending request
+        has_unjoined = True
+        unjoined_buttons.append([InlineKeyboardButton(f"📢 Request {ch_title}", url=ch_link)])
 
     if has_unjoined:
         bot_info = await context.bot.get_me()
@@ -573,7 +585,19 @@ async def get_link_manually(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Link generation error: {e}")
 
-# --- Handle Join Requests (Without Approving them to Channel) ---
+# --- Member Action & Join Request Event Listeners ---
+async def handle_chat_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove bypass entry when user's status in the channel changes (e.g., approved or kicked/removed)."""
+    try:
+        result = update.chat_member
+        if result:
+            user_id = result.new_chat_member.user.id
+            chat_id = result.chat.id
+            # User channel mein approve hua ya remove hua, uska bypass token delete kar do.
+            join_req_col.delete_one({"user_id": user_id, "channel_id": chat_id})
+    except Exception as e:
+        print(f"Chat Member Update Error: {e}")
+
 async def handle_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user = update.chat_join_request.from_user
@@ -617,11 +641,14 @@ def main():
     # File Media Handlers
     app.add_handler(MessageHandler(filters.Document.ALL | filters.VIDEO | filters.PHOTO | filters.AUDIO, handle_incoming_files))
 
-    # Catch Join Requests (Store to DB but DO NOT add to channel)
+    # Event Handlers (Join Request & Member Update)
     app.add_handler(ChatJoinRequestHandler(handle_join_request))
+    app.add_handler(ChatMemberHandler(handle_chat_member_update, ChatMemberHandler.CHAT_MEMBER))
 
-    print("🤖 Bot with Request-Based Bypass (No Auto-Join) successfully running...")
-    app.run_polling(drop_pending_updates=True)
+    print("🤖 Bot with Request-Based Bypass & Auto-Clear logic successfully running...")
+    
+    # Updated polling with ALL_TYPES so ChatMember events are received
+    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
