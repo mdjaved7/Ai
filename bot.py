@@ -124,7 +124,9 @@ async def send_files_logic(update_or_query, context, batch_key, is_callback=Fals
     
     info_msg = await context.bot.send_message(chat_id=chat_id, text="⏳ Sending files...")
     sent_message_ids = [info_msg.message_id]
-    delete_at_time = time.time() + 28800 
+    
+    # Auto-delete set to 4 hours (14400 seconds)
+    delete_at_time = time.time() + 14400 
     
     for file in batch.get("files", []):
         try:
@@ -153,7 +155,7 @@ async def send_files_logic(update_or_query, context, batch_key, is_callback=Fals
         
     await context.bot.send_message(
         chat_id=chat_id, 
-        text="𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 𝟾 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴.", 
+        text="𝙷𝙸𝙽𝙳𝙸 𝚂𝚃𝙾𝚁𝚈\n❤️ 𝙷𝙴𝚈 𝙱𝚁𝙾 🇮🇳 \n\n📂 𝙵𝙸𝙻𝙴𝚂 𝚆𝙸𝙻𝙻 𝙱𝙴 𝙳𝙴𝙻𝙴𝚃𝙴𝙳 \n𝙰𝙵𝚃𝙴𝚁 [ 𝟺 𝙷𝙾𝚄𝚁𝚂 ] 𝙿𝙻𝙴𝙰𝚂𝙴 \n𝚂𝙰𝚅𝙴 𝚃𝙷𝙴𝙼 𝚂𝙾𝙼𝙴𝚆𝙷𝙴𝚁𝙴 𝚂𝙰𝙵𝙴.", 
         parse_mode="Markdown"
     )
 
